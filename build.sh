@@ -352,6 +352,25 @@
 # The kernel is built in ${COMMON_OUT_DIR}/${KERNEL_DIR}.
 # Out-of-tree modules are built in ${COMMON_OUT_DIR}/${EXT_MOD} where
 # ${EXT_MOD} is the path to the module source code.
+#
+#
+#   DTS_EXT_DIR
+#     Set this variable to compile an out-of-tree device tree. The value of
+#     this variable is set to the kbuild variable "dtstree" which is used to
+#     compile the device tree, it will be used to lookup files in FILES as well.
+#     If this is set, then it's likely the dt-bindings are out-of-tree as well.
+#     So be sure to set DTC_INCLUDE in the BUILD_CONFIG file to the include path
+#     containing the dt-bindings.
+#
+#     Update the MAKE_GOALS variable and the FILES variable to specify
+#     the target dtb files with the path under ${DTS_EXT_DIR}, so that they
+#     could be compiled and copied to the dist directory. Like the following:
+#         DTS_EXT_DIR=common-modules/virtual-device
+#         MAKE_GOALS="${MAKE_GOALS} k3399-rock-pi-4b.dtb"
+#         FILES="${FILES} rk3399-rock-pi-4b.dtb"
+#     where the dts file path is
+#     common-modules/virtual-device/rk3399-rock-pi-4b.dts
+#
 
 set -e
 
@@ -706,6 +725,23 @@ else
   RAMDISK_EXT="lz4"
 fi
 
+
+if [ -n "${DTS_EXT_DIR}" ]; then
+  if [[ "${MAKE_GOALS}" =~ dtbs|\.dtb|\.dtbo ]]; then
+    # DTS_EXT_DIR needs to be relative to KERNEL_DIR but we allow one to set
+    # it relative to ROOT_DIR for ease of use. So figure out what was used.
+    if [ -d "${ROOT_DIR}/${DTS_EXT_DIR}" ]; then
+      # DTS_EXT_DIR is currently relative to ROOT_DIR. So recalcuate it to be
+      # relative to KERNEL_DIR
+      DTS_EXT_DIR=$(rel_path ${ROOT_DIR}/${DTS_EXT_DIR} ${KERNEL_DIR})
+    elif [ ! -d "${KERNEL_DIR}/${DTS_EXT_DIR}" ]; then
+      echo "Couldn't find the dtstree -- ${DTS_EXT_DIR}" >&2
+      exit 1
+    fi
+    MAKE_ARGS+=("dtstree=${DTS_EXT_DIR}")
+  fi
+fi
+
 if [ -n "${SKIP_IF_VERSION_MATCHES}" ]; then
   if [ -f "${DIST_DIR}/vmlinux" ]; then
     kernelversion="$(cd ${KERNEL_DIR} && make -s "${TOOL_ARGS[@]}" O=${OUT_DIR} kernelrelease)"
@@ -999,10 +1035,15 @@ done
 
 echo "========================================================"
 echo " Copying files"
-for FILE in $(cd ${OUT_DIR} && ls -1 ${FILES}); do
+for FILE in ${FILES}; do
   if [ -f ${OUT_DIR}/${FILE} ]; then
     echo "  $FILE"
     cp -p ${OUT_DIR}/${FILE} ${DIST_DIR}/
+  elif [[ "${FILE}" =~ \.dtb|\.dtbo ]]  && \
+      [ -n "${DTS_EXT_DIR}" ] && [ -f "${OUT_DIR}/${DTS_EXT_DIR}/${FILE}" ] ; then
+    # DTS_EXT_DIR is recalculated before to be relative to KERNEL_DIR
+    echo "  $FILE"
+    cp -p "${OUT_DIR}/${DTS_EXT_DIR}/${FILE}" "${DIST_DIR}/"
   else
     echo "  $FILE is not a file, skipping"
   fi
